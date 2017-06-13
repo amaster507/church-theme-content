@@ -23,7 +23,7 @@ add_theme_support( 'ctc-events', array(
 		//...
 	),
 	//...
-);
+) );
 
 ```
 
