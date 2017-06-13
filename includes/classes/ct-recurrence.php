@@ -83,6 +83,8 @@ if ( ! class_exists( 'CT_Recurrence' ) ) {
 				'monthly_type',
 				'monthly_week',
 				'limit',
+				//following line added by AMasterDesigns for excluding dates from recurrence
+				'exclude_dates',
 			);
 
 			// Loop arguments
@@ -98,7 +100,9 @@ if ( ! class_exists( 'CT_Recurrence' ) ) {
 				}
 
 				// Trim value
-				$args[$arg] = trim( $new_args[$arg] );
+				// changed from the following code by AMasterDesigns to allow arrays as args
+				//$args[$arg] = trim( $new_args[$arg] );
+				$args[$arg] = ( is_array( $new_args[$arg] ) ) ?  $new_args[$arg] : trim( $new_args[$arg] );
 
 			}
 			$args = $new_args;
@@ -139,6 +143,27 @@ if ( ! class_exists( 'CT_Recurrence' ) ) {
 				}
 
 			}
+			
+			// The following code block added by AMasterDesigns for excluding dates from recurrence
+			if ( $args ) {
+				if ( ! empty( $args['exclude_dates'] ) ) {
+					// if not array explode comma separated string to array and remove whitespace
+					if ( ! is_array( $args['exclude_dates'] ) ) {
+						$exclude_dates = array_map( 'trim', explode( ',', $args['exclude_dates'] ) );
+					} else {
+						$exclude_dates = $args['exclude_dates'];
+					}
+					//validate each date and return into args['exclude_dates'] an an array
+					$valid_excluded_dates = array();
+					foreach( $exclude_dates as $exclude_date ){
+						if ( $this->validate_date( $exclude_date ) ){
+							$valid_excluded_dates[] = $exclude_date;
+						}
+					}
+					$args['exclude_dates'] = $valid_excluded_dates;
+				}
+			}
+			// end of added code block by AMasterDesigns
 
 			// Interval
 			// Every X weeks / months / years
@@ -244,134 +269,152 @@ if ( ! class_exists( 'CT_Recurrence' ) ) {
 			// This may or may not be future
 			if ( $args ) { // valid args
 
-				// Get month, day and year
-				list( $start_date_y, $start_date_m, $start_date_d ) = explode( '-', $args['start_date'] );
+				// for loop inserted by AMasterDesigns to exclude dates from recurrence
+				//  default code is the code inside of the loop ran once.
+				// excluded dates are stored in an array in $args['exclude_dates']
+				// this loop should only take one or two times to complete,
+				//  but by some chance if this runs 100 itirations and still no  non-excluded date then the loop should end
+				for ( $itiration = 1; $itiration <= 100; $itiration++ ) {
+				
+					// Get month, day and year
+					list( $start_date_y, $start_date_m, $start_date_d ) = explode( '-', $args['start_date'] );
 
-				// Calculate next recurrence
-				switch ( $args['frequency'] ) {
+					// Calculate next recurrence
+					switch ( $args['frequency'] ) {
 
-					// Weekly
-					case 'weekly' :
+						// Weekly
+						case 'weekly' :
 
-						// Add week(s)
-						// This will always be the same day of the week (Mon, Tue, etc.)
-						$DateTime = new DateTime( $args['start_date'] );
-						$DateTime->modify( '+' . $args['interval'] . ' weeks' );
-						list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
+							// Add week(s)
+							// This will always be the same day of the week (Mon, Tue, etc.)
+							$DateTime = new DateTime( $args['start_date'] );
+							$DateTime->modify( '+' . $args['interval'] . ' weeks' );
+							list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
 
-						break;
+							break;
 
-					// Monthly
-					case 'monthly' :
+						// Monthly
+						case 'monthly' :
 
-						// On same day of the month
-						// Move forward X month(s)
-						$DateTime = new DateTime( $args['start_date'] );
-						$DateTime->modify( '+' . $args['interval'] . ' months' );
-						list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
+							// On same day of the month
+							// Move forward X month(s)
+							$DateTime = new DateTime( $args['start_date'] );
+							$DateTime->modify( '+' . $args['interval'] . ' months' );
+							list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
 
-							// If day is less than what it was, the next month was skipped to because day of month didn't exist
-							// For example, October 31 recurring monthly became December 1, because November 31 doesn't example
-							// Another example is Feburary 29 not existing except on leap years
-							// Users should use "Last Day" instead of 29+ since they do not always exist (they can edit to correct)
-							if ( $d < $start_date_d ) {
+								// If day is less than what it was, the next month was skipped to because day of month didn't exist
+								// For example, October 31 recurring monthly became December 1, because November 31 doesn't example
+								// Another example is Feburary 29 not existing except on leap years
+								// Users should use "Last Day" instead of 29+ since they do not always exist (they can edit to correct)
+								if ( $d < $start_date_d ) {
 
-								// Move back to last day of last month
-								// It makes more helpful to stay on same month than skip to the next
-								$m--;
-								if ( 0 == $m ) {
-									$m = 12;
-									$y--;
+									// Move back to last day of last month
+									// It makes more helpful to stay on same month than skip to the next
+									$m--;
+									if ( 0 == $m ) {
+										$m = 12;
+										$y--;
+									}
+
+									// Get days in the prior month
+									$d = date( 't', mktime( 0, 0, 0, $m, $d, $y) );
+
 								}
 
-								// Get days in the prior month
-								$d = date( 't', mktime( 0, 0, 0, $m, $d, $y) );
+							// On a specific week of month's day
+							// 1st - 4th or Last day of week in the month
+							// This will adjust day of the month from "same day" to "Third Sunday", for example
+							// Note: Every month always has at least 4 full weeks (only 5 or 6 occasionally)
+							if ( 'week' == $args['monthly_type'] && ! empty( $args['monthly_week'] ) ) {
 
-							}
+								// What is start_date's day of the week
+								// 0 - 6 represents Sunday through Saturday
+								$start_date_day_of_week = date( 'w', strtotime( $args['start_date'] ) );
 
-						// On a specific week of month's day
-						// 1st - 4th or Last day of week in the month
-						// This will adjust day of the month from "same day" to "Third Sunday", for example
-						// Note: Every month always has at least 4 full weeks (only 5 or 6 occasionally)
-						if ( 'week' == $args['monthly_type'] && ! empty( $args['monthly_week'] ) ) {
+								// Loop the days of this month
+								$week_of_month = 1;
+								$times_day_of_week_found = 0;
+								$days_in_month = date( 't', mktime( 0, 0, 0, $m, 1, $y ) );
 
-							// What is start_date's day of the week
-							// 0 - 6 represents Sunday through Saturday
-							$start_date_day_of_week = date( 'w', strtotime( $args['start_date'] ) );
+								for ( $i = 1; $i <= $days_in_month; $i++ ) {
 
-							// Loop the days of this month
-							$week_of_month = 1;
-							$times_day_of_week_found = 0;
-							$days_in_month = date( 't', mktime( 0, 0, 0, $m, 1, $y ) );
+									// Get this day's day of week (0 - 6)
+									$day_of_week = date( 'w', mktime( 0, 0, 0, $m, $i, $y ) );
 
-							for ( $i = 1; $i <= $days_in_month; $i++ ) {
+									// This day's day of week matches start date's day of week
+									if ( $day_of_week == $start_date_day_of_week ) {
 
-								// Get this day's day of week (0 - 6)
-								$day_of_week = date( 'w', mktime( 0, 0, 0, $m, $i, $y ) );
+										$last_day_of_week_found = $i;
 
-								// This day's day of week matches start date's day of week
-								if ( $day_of_week == $start_date_day_of_week ) {
+										// Count it
+										$times_day_of_week_found++;
 
-									$last_day_of_week_found = $i;
+										// Is this the 1st - 4th day of week we're looking for?
+										if ( $args['monthly_week'] == $times_day_of_week_found ) {
 
-									// Count it
-									$times_day_of_week_found++;
+											$d = $i;
 
-									// Is this the 1st - 4th day of week we're looking for?
-									if ( $args['monthly_week'] == $times_day_of_week_found ) {
+											break;
 
-										$d = $i;
-
-										break;
+										}
 
 									}
 
 								}
 
-							}
-
-							// Are we looking for 'last' day of week in a month?
-							if ( 'last' == $args['monthly_week'] && ! empty( $last_day_of_week_found ) ) {
-								$d = $last_day_of_week_found;
-							}
-
-						}
-
-						break;
-
-					// Yearly
-					case 'yearly' :
-
-						// Move forward X year(s)
-						$DateTime = new DateTime( $args['start_date'] );
-						$DateTime->modify( '+' . $args['interval'] . ' years' );
-						list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
-
-							// If day is less than what it was, the next month was skipped to because day of month didn't exist
-							// In the case of year this happens when February 29 tries to recur to next non-leap year
-							// Users should use "Last Day" instead of 29+ since they do not always exist (they can edit to correct)
-							if ( $d < $start_date_d ) {
-
-								// Move back to last day of last month
-								// It is more helpful to stay on same month than skip to the next
-								$m--;
-								if ( 0 == $m ) {
-									$m = 12;
-									$y--;
+								// Are we looking for 'last' day of week in a month?
+								if ( 'last' == $args['monthly_week'] && ! empty( $last_day_of_week_found ) ) {
+									$d = $last_day_of_week_found;
 								}
 
-								// Get days in the prior month
-								$d = date( 't', mktime( 0, 0, 0, $m, $d, $y) );
-
 							}
 
+							break;
+
+						// Yearly
+						case 'yearly' :
+
+							// Move forward X year(s)
+							$DateTime = new DateTime( $args['start_date'] );
+							$DateTime->modify( '+' . $args['interval'] . ' years' );
+							list( $y, $m, $d ) = explode( '-', $DateTime->format( 'Y-m-d' ) );
+
+								// If day is less than what it was, the next month was skipped to because day of month didn't exist
+								// In the case of year this happens when February 29 tries to recur to next non-leap year
+								// Users should use "Last Day" instead of 29+ since they do not always exist (they can edit to correct)
+								if ( $d < $start_date_d ) {
+
+									// Move back to last day of last month
+									// It is more helpful to stay on same month than skip to the next
+									$m--;
+									if ( 0 == $m ) {
+										$m = 12;
+										$y--;
+									}
+
+									// Get days in the prior month
+									$d = date( 't', mktime( 0, 0, 0, $m, $d, $y) );
+
+								}
+
+							break;
+
+					}
+
+					// Form the date string
+					$date = date( 'Y-m-d', mktime( 0, 0, 0, $m, $d, $y ) ); // pad day, month with 0
+
+					// added the following code block by AMasterDesigns to break loop if date is false or date not excluded
+					if ( ! isset($args['exclude_dates']) || empty($args['exclude_dates']) || ! $date || ! in_array( $date, $args['exclude_dates'] ) ) {
 						break;
-
+					} else {
+						$args['start_date'] = $date;
+					}
+					// end of added code block
+				
+				// end of loop itirations added by AMasterDesigns
 				}
-
-				// Form the date string
-				$date = date( 'Y-m-d', mktime( 0, 0, 0, $m, $d, $y ) ); // pad day, month with 0
-
+			
 			}
 
 			return $date;
